@@ -88,6 +88,64 @@ public final class FileTsSource implements TsSource {
         return best;
     }
 
+    /**
+     * Real-time rate of a capture in output bytes (188-byte packets) per second, from the first and the last PCR of
+     * one PID, so a looping playback can be paced like a live tuner. 0 when it cannot tell (no PCR, odd values):
+     * then the file is read as fast as the consumer accepts it.
+     */
+    public static long estimateBytesPerSecond(java.io.File f) {
+        final int window = 4 * 1024 * 1024;
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r")) {
+            long len = raf.length();
+            byte[] head = new byte[(int) Math.min(window, len)];
+            raf.readFully(head);
+            int[] fmt = detect(head, Math.min(head.length, PROBE_BYTES));
+            if (fmt == null) return 0;
+            int size = fmt[0], sync = fmt[1];   // sync = file offset of the first 0x47
+            int pcrPid = -1;
+            long pcr0 = -1, pos0 = -1;
+            for (int p = sync; p + 188 <= head.length; p += size) {
+                long pcr = pcrAt(head, p, -1);
+                if (pcr >= 0) {
+                    pcrPid = ((head[p + 1] & 0x1F) << 8) | (head[p + 2] & 0xFF);
+                    pcr0 = pcr;
+                    pos0 = p;
+                    break;
+                }
+            }
+            if (pcrPid < 0) return 0;
+            long tailStart = Math.max(sync, len - window);
+            tailStart = sync + ((tailStart - sync + size - 1) / size) * size;   // back on the packet grid
+            byte[] tail = new byte[(int) (len - tailStart)];
+            raf.seek(tailStart);
+            raf.readFully(tail);
+            long pcr1 = -1, pos1 = -1;
+            for (int p = 0; p + 188 <= tail.length; p += size) {
+                long pcr = pcrAt(tail, p, pcrPid);
+                if (pcr >= 0) {
+                    pcr1 = pcr;
+                    pos1 = tailStart + p;
+                }
+            }
+            if (pcr1 <= pcr0 || pos1 <= pos0) return 0;
+            long rate = (pos1 - pos0) / size * 188L * 27_000_000L / (pcr1 - pcr0);
+            return rate >= 50_000 && rate <= 10_000_000 ? rate : 0;   // 0.4 .. 80 Mbit/s, else do not trust it
+        } catch (java.io.IOException | RuntimeException e) {
+            return 0;
+        }
+    }
+
+    /** PCR (27 MHz units) of the packet whose sync byte is at {@code p}, or -1 (no PCR, or another PID). */
+    private static long pcrAt(byte[] b, int p, int pid) {
+        if ((b[p] & 0xFF) != 0x47) return -1;
+        if (pid >= 0 && (((b[p + 1] & 0x1F) << 8) | (b[p + 2] & 0xFF)) != pid) return -1;
+        if (((b[p + 3] >> 4) & 2) == 0) return -1;                       // no adaptation field
+        if ((b[p + 4] & 0xFF) < 7 || (b[p + 5] & 0x10) == 0) return -1;  // no PCR in it
+        long base = ((long) (b[p + 6] & 0xFF) << 25) | ((long) (b[p + 7] & 0xFF) << 17)
+                | ((long) (b[p + 8] & 0xFF) << 9) | ((long) (b[p + 9] & 0xFF) << 1) | ((b[p + 10] & 0xFF) >> 7);
+        return base * 300 + (((b[p + 10] & 1) << 8) | (b[p + 11] & 0xFF));
+    }
+
     private void pump(Listener l) {
         try {
             do {

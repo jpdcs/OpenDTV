@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
@@ -20,6 +21,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
+import ph.opendtv.source.FileTsSource;
 import ph.opendtv.source.SignalStatus;
 import ph.opendtv.source.TsSource;
 import ph.opendtv.source.UsbTunerSource;
@@ -73,6 +75,9 @@ public final class TunerHub {
     private boolean locked;
     private volatile TsDemux demux = new TsDemux();
     private volatile String lastMessage = "";
+    // simulated tuner (debuggable builds, no dongle): guarded by devLock
+    private FileTsSource simSource;
+    private int simKhz = -1;
 
     private TunerHub(Context app) {
         this.app = app;
@@ -106,7 +111,61 @@ public final class TunerHub {
     }
 
     public boolean isTunerPresent() {
-        return findDevice() != null;
+        return findDevice() != null || simDir() != null;
+    }
+
+    // ------------------------------------------------------------------ simulated tuner (no dongle)
+
+    /**
+     * Debuggable builds with no dongle plugged in: a frequency is "on air" when {@code sim/<kHz>.ts} exists in the
+     * app's external (or internal) files folder, e.g. {@code sim/491143.ts} for UHF 17. Tuning there plays that
+     * capture in a loop at its own bit rate, so scan, channel list, EPG and playback can be tested on an emulator.
+     * Returns null (feature off) when the build is not debuggable or the folder has no .ts file.
+     */
+    private java.io.File simDir() {
+        if ((app.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0) return null;
+        java.io.File[] bases = {app.getExternalFilesDir(null), app.getFilesDir()};
+        for (java.io.File base : bases) {
+            if (base == null) continue;
+            java.io.File dir = new java.io.File(base, "sim");
+            String[] names = dir.list();
+            if (names == null) continue;
+            for (String n : names) if (n.endsWith(".ts")) return dir;
+        }
+        return null;
+    }
+
+    private boolean simTuneLocked(java.io.File dir, int khz) {
+        if (simSource != null && simKhz == khz) return true;     // same multiplex: keep the demux, like a real tuner
+        stopSimLocked();
+        currentKhz = khz;
+        demux = new TsDemux();
+        final java.io.File f = new java.io.File(dir, khz + ".ts");
+        if (!f.isFile()) {
+            locked = false;
+            return false;
+        }
+        long rate = FileTsSource.estimateBytesPerSecond(f);
+        FileTsSource s = new FileTsSource("Simulated " + f.getName(), new FileTsSource.Opener() {
+            @Override
+            public java.io.InputStream open() throws java.io.IOException {
+                return new java.io.FileInputStream(f);
+            }
+        }, rate, true);
+        s.start(listener);
+        simSource = s;
+        simKhz = khz;
+        locked = true;
+        lastMessage = "Simulated tuner: " + f.getName() + (rate > 0 ? " at " + (rate * 8 / 1000) + " kbit/s" : "");
+        Log.i(TAG, "sim tune " + khz + " kHz -> " + lastMessage);
+        return true;
+    }
+
+    private void stopSimLocked() {
+        FileTsSource s = simSource;
+        simSource = null;
+        simKhz = -1;
+        if (s != null) s.stop();
     }
 
     /** Last status line from the tuner driver (init result, lock, errors). */
@@ -120,6 +179,7 @@ public final class TunerHub {
      */
     public boolean ensurePermission(long timeoutMs) {
         UsbDevice d = findDevice();
+        if (d == null && simDir() != null) return true;   // simulated tuner needs no USB permission
         if (d == null) {
             lastMessage = "Tuner 048d:275a not found (plug it in; OTG adapter on a phone).";
             return false;
@@ -219,6 +279,11 @@ public final class TunerHub {
      */
     public boolean ensureTuned(int khz, BooleanSupplier cancelled) {
         synchronized (devLock) {
+            if (findDevice() == null) {
+                java.io.File sim = simDir();
+                if (sim != null) return simTuneLocked(sim, khz);
+            }
+            stopSimLocked();                   // a real dongle was plugged in: it wins
             if (!openLocked(khz)) return false;
             if (locked && currentKhz == khz && source.isReady()) return true;
             return tuneLocked(khz, cancelled);
@@ -274,6 +339,7 @@ public final class TunerHub {
     }
 
     private void teardownLocked() {
+        stopSimLocked();
         UsbTunerSource s = source;
         source = null;
         if (s != null) s.stop();
