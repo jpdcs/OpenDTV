@@ -12,7 +12,6 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.List;
-import java.util.Set;
 
 import ph.opendtv.R;
 import ph.opendtv.ts.ServiceInfo;
@@ -24,12 +23,23 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
         void onFavoriteToggle(ServiceInfo service, boolean isFavorite);
     }
 
+    /**
+     * Which rows are starred. The owner keys favorites per list entry (frequency + service ID), because the same
+     * service ID can be two different channels on two multiplexes.
+     */
+    public interface Favorites {
+        boolean contains(ServiceInfo service);
+
+        /** Flips the star; returns true if the channel is now a favorite. */
+        boolean toggle(ServiceInfo service);
+    }
+
     private final Context context;
     private final List<ServiceInfo> channels;
-    private final Set<Integer> favorites;
+    private final Favorites favorites;
     private final OnChannelClickListener listener;
 
-    public ChannelAdapter(Context context, List<ServiceInfo> channels, Set<Integer> favorites, OnChannelClickListener listener) {
+    public ChannelAdapter(Context context, List<ServiceInfo> channels, Favorites favorites, OnChannelClickListener listener) {
         this.context = context;
         this.channels = channels;
         this.favorites = favorites;
@@ -57,7 +67,7 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
             holder.ivLogo.setImageResource(android.R.drawable.ic_menu_slideshow);
         }
 
-        boolean isFav = favorites.contains(channel.serviceId);
+        boolean isFav = favorites.contains(channel);
         holder.ivFavorite.setImageResource(isFav ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
 
         holder.itemView.setOnClickListener(v -> {
@@ -65,24 +75,14 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
         });
 
         holder.itemView.setOnLongClickListener(v -> {
-            boolean newState = !favorites.contains(channel.serviceId);
-            if (newState) {
-                favorites.add(channel.serviceId);
-            } else {
-                favorites.remove(channel.serviceId);
-            }
+            boolean newState = favorites.toggle(channel);
             notifyItemChanged(position);
             if (listener != null) listener.onFavoriteToggle(channel, newState);
             return true;
         });
 
         holder.ivFavorite.setOnClickListener(v -> {
-            boolean newState = !favorites.contains(channel.serviceId);
-            if (newState) {
-                favorites.add(channel.serviceId);
-            } else {
-                favorites.remove(channel.serviceId);
-            }
+            boolean newState = favorites.toggle(channel);
             notifyItemChanged(position);
             if (listener != null) listener.onFavoriteToggle(channel, newState);
         });
