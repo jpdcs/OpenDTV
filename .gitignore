@@ -1,0 +1,15 @@
+# Gradle and Android Studio output
+.gradle/
+build/
+.cxx/
+.externalNativeBuild/
+captures/
+
+# Machine-specific settings (Android Studio writes local.properties with this machine's SDK path)
+local.properties
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
