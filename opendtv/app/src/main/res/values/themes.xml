@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.OpenDtv" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- Always dark. The whole UI is drawn white-on-dark (list rows, frosted HUD and side panel, gold focus ring), and the
+         landscape side panel is dark whatever the system theme, so a light theme left white list text on a light
+         background in portrait. -->
+    <style name="Theme.OpenDtv" parent="Theme.Material3.Dark.NoActionBar">
     </style>
 </resources>
