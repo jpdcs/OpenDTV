@@ -129,6 +129,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
 
     // Data broadcast (BML), landscape and portrait. Landscape: keys only. Portrait: floating remote button + panel.
     private BmlController bml;
+    private ph.opendtv.ota.LogicBundles logicBundles;   // app logic that updates over the air (no new APK)
     private final EwbsBanner ewbsBanner = new EwbsBanner(this);
     private final Runnable ewbsTick = new Runnable() {
         @Override
@@ -188,11 +189,36 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
     public static final class ChannelEntry {
         public int khz;
         public ServiceInfo service;
+        /** Network ID / TS ID of the multiplex the scan found this service in (-1 = unknown, e.g. loaded from prefs). */
+        public int networkId = -1;
+        public int tsId = -1;
 
         public ChannelEntry(int khz, ServiceInfo service) {
             this.khz = khz;
             this.service = service;
         }
+    }
+
+    /**
+     * A service ID is only unique inside one multiplex: broadcasters reuse small IDs (Solar's services are 1, 2, 3 ...),
+     * so the same ID on another multiplex is another channel. It is a duplicate only when it is the same multiplex
+     * received again on a second frequency: same TS ID, and the same network ID when both are known (issue #1).
+     */
+    private static boolean isSameService(ChannelEntry ce, int networkId, int tsId, int serviceId) {
+        if (ce.service.serviceId != serviceId || ce.tsId != tsId) return false;
+        return ce.networkId < 0 || networkId < 0 || ce.networkId == networkId;
+    }
+
+    /** The duplicate rule comes from the over-the-air logic bundle; the rule above is only the fallback. */
+    private boolean sameService(ChannelEntry ce, int networkId, int tsId, int serviceId) {
+        ph.opendtv.ota.AppLogic logic = logicBundles == null ? null : logicBundles.logic();
+        if (logic == null) return isSameService(ce, networkId, tsId, serviceId);
+        return logic.isSameService(ce.service.serviceId, ce.tsId, ce.networkId, serviceId, tsId, networkId);
+    }
+
+    /** One list entry is one service on one frequency (service IDs repeat across multiplexes, issue #1). */
+    private static boolean isSameEntry(ChannelEntry a, ChannelEntry b) {
+        return a == b || (a.khz == b.khz && a.service.serviceId == b.service.serviceId);
     }
 
     @Override
@@ -202,6 +228,8 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
 
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
         hub = TunerHub.get(this);
+        logicBundles = ph.opendtv.ota.LogicBundles.get(this);
+        logicBundles.logic();   // load the logic bundle before anything uses it
 
         loadFavorites();
         loadChannels();
@@ -266,6 +294,9 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         showCurrentChannel();
 
         initTuner();
+        // A new logic bundle is kept once the app has run fine for a few seconds; otherwise the next start goes back.
+        new Handler(Looper.getMainLooper()).postDelayed(logicBundles::markHealthy, 5000);
+        logicBundles.checkForUpdate(this, false);
     }
 
     /** 0/1 = portrait/landscape, +2 on a tablet-sized screen: the three layout sets we ship. */
@@ -1174,8 +1205,9 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
             recyclerView.setAdapter(new ph.opendtv.ui.ChannelAdapter(this, favServices, favorites, new ph.opendtv.ui.ChannelAdapter.OnChannelClickListener() {
                 @Override
                 public void onChannelClick(ServiceInfo service) {
+                    // the adapter hands back the entry's own ServiceInfo; the service ID alone can match two channels
                     for (ChannelEntry ce : favEntries) {
-                        if (ce.service.serviceId == service.serviceId) {
+                        if (ce.service == service) {
                             selectAndPlayChannel(ce);
                             break;
                         }
@@ -1248,6 +1280,11 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                     audioLanguageSummary() + " - choose among the channel's audio tracks",
                     R.drawable.ic_audio,
                     this::showAudioLanguageDialog));
+            items.add(new ph.opendtv.ui.SettingAdapter.SettingItem(
+                    "App Updates (no APK)",
+                    logicBundles.describe() + " - tap to check for a newer one",
+                    android.R.drawable.stat_sys_download,
+                    () -> logicBundles.checkForUpdate(this, true)));
             recyclerView.setAdapter(new ph.opendtv.ui.SettingAdapter(this, items));
         } else {
             // Channels tab
@@ -1256,8 +1293,9 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
             recyclerView.setAdapter(new ph.opendtv.ui.ChannelAdapter(this, services, favorites, new ph.opendtv.ui.ChannelAdapter.OnChannelClickListener() {
                 @Override
                 public void onChannelClick(ServiceInfo service) {
+                    // the adapter hands back the entry's own ServiceInfo; the service ID alone can match two channels
                     for (ChannelEntry ce : allChannels) {
-                        if (ce.service.serviceId == service.serviceId) {
+                        if (ce.service == service) {
                             selectAndPlayChannel(ce);
                             break;
                         }
@@ -1511,7 +1549,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         int currentIdx = -1;
         if (currentChannelEntry != null) {
             for (int i = 0; i < allChannels.size(); i++) {
-                if (allChannels.get(i).service.serviceId == currentChannelEntry.service.serviceId) {
+                if (isSameEntry(allChannels.get(i), currentChannelEntry)) {
                     currentIdx = i;
                     break;
                 }
@@ -1526,7 +1564,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         int currentIdx = -1;
         if (currentChannelEntry != null) {
             for (int i = 0; i < allChannels.size(); i++) {
-                if (allChannels.get(i).service.serviceId == currentChannelEntry.service.serviceId) {
+                if (isSameEntry(allChannels.get(i), currentChannelEntry)) {
                     currentIdx = i;
                     break;
                 }
@@ -1939,17 +1977,21 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                     try { Thread.sleep(250); } catch (InterruptedException e) { break; }
                 }
 
+                int networkId = d.getNetworkId(), tsId = d.getTsId();
                 for (ServiceInfo s : d.getServices()) {
                     if (!s.pmtSeen || s.streams.isEmpty() || !s.hasVideo()) continue;
                     boolean exists = false;
                     for (ChannelEntry ce : allChannels) {
-                        if (ce.service.serviceId == s.serviceId) {
+                        if (sameService(ce, networkId, tsId, s.serviceId)) {
                             exists = true;
                             break;
                         }
                     }
                     if (!exists) {
-                        allChannels.add(new ChannelEntry(khz, s.copy()));
+                        ChannelEntry entry = new ChannelEntry(khz, s.copy());
+                        entry.networkId = networkId;
+                        entry.tsId = tsId;
+                        allChannels.add(entry);
                     }
                 }
             }
