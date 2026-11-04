@@ -7,7 +7,7 @@ import ph.opendtv.ota.AppLogic;
  * Build with tools/ota/build_bundle.sh; bump VERSION for every published bundle.
  */
 public final class Logic implements AppLogic {
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
 
     @Override
     public int version() {
@@ -17,8 +17,10 @@ public final class Logic implements AppLogic {
     @Override
     public boolean isSameService(int listedServiceId, int listedTsId, int listedNetworkId,
                                  int serviceId, int tsId, int networkId) {
-        // Bundle 1: the rule the released app has today. Any service whose ID is already listed counts as a
-        // duplicate, on any frequency.
-        return listedServiceId == serviceId;
+        // Bundle 2 (issue #1): a service ID is only unique inside one multiplex, and broadcasters reuse small IDs
+        // (Solar's services are 1, 2, 3 ...). It is a duplicate only when it is the same multiplex received again on
+        // another frequency: same TS ID, and the same network ID when both are known.
+        if (listedServiceId != serviceId || listedTsId != tsId) return false;
+        return listedNetworkId < 0 || networkId < 0 || listedNetworkId == networkId;
     }
 }
