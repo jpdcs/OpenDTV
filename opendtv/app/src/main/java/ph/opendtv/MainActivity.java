@@ -129,6 +129,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
 
     // Data broadcast (BML), landscape and portrait. Landscape: keys only. Portrait: floating remote button + panel.
     private BmlController bml;
+    private ph.opendtv.ota.LogicBundles logicBundles;   // app logic that updates over the air (no new APK)
     private final EwbsBanner ewbsBanner = new EwbsBanner(this);
     private final Runnable ewbsTick = new Runnable() {
         @Override
@@ -208,6 +209,13 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         return ce.networkId < 0 || networkId < 0 || ce.networkId == networkId;
     }
 
+    /** The duplicate rule comes from the over-the-air logic bundle; the rule above is only the fallback. */
+    private boolean sameService(ChannelEntry ce, int networkId, int tsId, int serviceId) {
+        ph.opendtv.ota.AppLogic logic = logicBundles == null ? null : logicBundles.logic();
+        if (logic == null) return isSameService(ce, networkId, tsId, serviceId);
+        return logic.isSameService(ce.service.serviceId, ce.tsId, ce.networkId, serviceId, tsId, networkId);
+    }
+
     /** One list entry is one service on one frequency (service IDs repeat across multiplexes, issue #1). */
     private static boolean isSameEntry(ChannelEntry a, ChannelEntry b) {
         return a == b || (a.khz == b.khz && a.service.serviceId == b.service.serviceId);
@@ -220,6 +228,8 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
 
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
         hub = TunerHub.get(this);
+        logicBundles = ph.opendtv.ota.LogicBundles.get(this);
+        logicBundles.logic();   // load the logic bundle before anything uses it
 
         loadFavorites();
         loadChannels();
@@ -284,6 +294,9 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         showCurrentChannel();
 
         initTuner();
+        // A new logic bundle is kept once the app has run fine for a few seconds; otherwise the next start goes back.
+        new Handler(Looper.getMainLooper()).postDelayed(logicBundles::markHealthy, 5000);
+        logicBundles.checkForUpdate(this, false);
     }
 
     /** 0/1 = portrait/landscape, +2 on a tablet-sized screen: the three layout sets we ship. */
@@ -1267,6 +1280,11 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                     audioLanguageSummary() + " - choose among the channel's audio tracks",
                     R.drawable.ic_audio,
                     this::showAudioLanguageDialog));
+            items.add(new ph.opendtv.ui.SettingAdapter.SettingItem(
+                    "App Updates (no APK)",
+                    logicBundles.describe() + " - tap to check for a newer one",
+                    android.R.drawable.stat_sys_download,
+                    () -> logicBundles.checkForUpdate(this, true)));
             recyclerView.setAdapter(new ph.opendtv.ui.SettingAdapter(this, items));
         } else {
             // Channels tab
@@ -1964,7 +1982,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                     if (!s.pmtSeen || s.streams.isEmpty() || !s.hasVideo()) continue;
                     boolean exists = false;
                     for (ChannelEntry ce : allChannels) {
-                        if (isSameService(ce, networkId, tsId, s.serviceId)) {
+                        if (sameService(ce, networkId, tsId, s.serviceId)) {
                             exists = true;
                             break;
                         }
