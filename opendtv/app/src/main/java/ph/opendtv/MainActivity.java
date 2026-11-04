@@ -180,7 +180,8 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
     private volatile boolean initializing;
 
     private final List<ChannelEntry> allChannels = new ArrayList<>();
-    private final Set<Integer> favorites = new HashSet<>();
+    /** Favorite channels as "khz:serviceId", one per list entry: service IDs repeat across multiplexes (issue #1). */
+    private final Set<String> favorites = new HashSet<>();
 
     private volatile boolean scanning;
     private volatile boolean scanCancel;
@@ -188,11 +189,29 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
     public static final class ChannelEntry {
         public int khz;
         public ServiceInfo service;
+        /** Network ID / TS ID of the multiplex the scan found this service in (-1 = unknown, e.g. loaded from prefs). */
+        public int networkId = -1;
+        public int tsId = -1;
 
         public ChannelEntry(int khz, ServiceInfo service) {
             this.khz = khz;
             this.service = service;
         }
+    }
+
+    /**
+     * A service ID is only unique inside one multiplex: broadcasters reuse small IDs (Solar's services are 1, 2, 3 ...),
+     * so the same ID on another multiplex is another channel. It is a duplicate only when it is the same multiplex
+     * received again on a second frequency: same TS ID, and the same network ID when both are known (issue #1).
+     */
+    private static boolean isSameService(ChannelEntry ce, int networkId, int tsId, int serviceId) {
+        if (ce.service.serviceId != serviceId || ce.tsId != tsId) return false;
+        return ce.networkId < 0 || networkId < 0 || ce.networkId == networkId;
+    }
+
+    /** One list entry is one service on one frequency (service IDs repeat across multiplexes, issue #1). */
+    private static boolean isSameEntry(ChannelEntry a, ChannelEntry b) {
+        return a == b || (a.khz == b.khz && a.service.serviceId == b.service.serviceId);
     }
 
     @Override
@@ -203,8 +222,8 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
         hub = TunerHub.get(this);
 
-        loadFavorites();
         loadChannels();
+        loadFavorites();   // after the channels: favorites saved by older versions are matched to a list entry
 
         // Live TV buffering, tuned for a fast channel start: playback begins as soon as 25 ms of media are queued
         // (a tiny safety margin over "instantly"; the first keyframe is the real floor), keeps 2-10 s buffered, and
@@ -1035,21 +1054,65 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         }
     }
 
+    private static String favoriteKey(ChannelEntry ce) {
+        return ce.khz + ":" + ce.service.serviceId;
+    }
+
+    /** The list entry a row shows: the adapters are given each entry's own ServiceInfo. */
+    private ChannelEntry entryFor(ServiceInfo service) {
+        for (ChannelEntry ce : allChannels) {
+            if (ce.service == service) return ce;
+        }
+        return null;
+    }
+
+    /** Stars in the channel lists, stored per list entry (frequency + service ID). */
+    private final ph.opendtv.ui.ChannelAdapter.Favorites favoriteStars = new ph.opendtv.ui.ChannelAdapter.Favorites() {
+        @Override
+        public boolean contains(ServiceInfo service) {
+            ChannelEntry ce = entryFor(service);
+            return ce != null && favorites.contains(favoriteKey(ce));
+        }
+
+        @Override
+        public boolean toggle(ServiceInfo service) {
+            ChannelEntry ce = entryFor(service);
+            if (ce == null) return false;
+            String key = favoriteKey(ce);
+            if (favorites.remove(key)) return false;
+            favorites.add(key);
+            return true;
+        }
+    };
+
     private void loadFavorites() {
         SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
         Set<String> favs = sp.getStringSet(PREF_FAV, new HashSet<>());
         favorites.clear();
+        boolean upgraded = false;
         for (String s : favs) {
+            if (s.indexOf(':') > 0) {
+                favorites.add(s);
+                continue;
+            }
+            // Saved by an older version as the service ID alone. Those versions listed only the first channel with a
+            // given ID (issue #1), so the star belongs to the first list entry with that ID.
+            upgraded = true;
             try {
-                favorites.add(Integer.parseInt(s));
+                int sid = Integer.parseInt(s);
+                for (ChannelEntry ce : allChannels) {
+                    if (ce.service.serviceId == sid) {
+                        favorites.add(favoriteKey(ce));
+                        break;
+                    }
+                }
             } catch (NumberFormatException ignored) {}
         }
+        if (upgraded) saveFavorites();
     }
 
     private void saveFavorites() {
-        Set<String> favs = new HashSet<>();
-        for (Integer id : favorites) favs.add(String.valueOf(id));
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putStringSet(PREF_FAV, favs).apply();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putStringSet(PREF_FAV, new HashSet<>(favorites)).apply();
     }
 
     private void saveChannels() {
@@ -1166,16 +1229,17 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
             List<ServiceInfo> favServices = new ArrayList<>();
             List<ChannelEntry> favEntries = new ArrayList<>();
             for (ChannelEntry ce : allChannels) {
-                if (favorites.contains(ce.service.serviceId)) {
+                if (favorites.contains(favoriteKey(ce))) {
                     favServices.add(ce.service);
                     favEntries.add(ce);
                 }
             }
-            recyclerView.setAdapter(new ph.opendtv.ui.ChannelAdapter(this, favServices, favorites, new ph.opendtv.ui.ChannelAdapter.OnChannelClickListener() {
+            recyclerView.setAdapter(new ph.opendtv.ui.ChannelAdapter(this, favServices, favoriteStars, new ph.opendtv.ui.ChannelAdapter.OnChannelClickListener() {
                 @Override
                 public void onChannelClick(ServiceInfo service) {
+                    // the adapter hands back the entry's own ServiceInfo; the service ID alone can match two channels
                     for (ChannelEntry ce : favEntries) {
-                        if (ce.service.serviceId == service.serviceId) {
+                        if (ce.service == service) {
                             selectAndPlayChannel(ce);
                             break;
                         }
@@ -1253,11 +1317,12 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
             // Channels tab
             List<ServiceInfo> services = new ArrayList<>();
             for (ChannelEntry ce : allChannels) services.add(ce.service);
-            recyclerView.setAdapter(new ph.opendtv.ui.ChannelAdapter(this, services, favorites, new ph.opendtv.ui.ChannelAdapter.OnChannelClickListener() {
+            recyclerView.setAdapter(new ph.opendtv.ui.ChannelAdapter(this, services, favoriteStars, new ph.opendtv.ui.ChannelAdapter.OnChannelClickListener() {
                 @Override
                 public void onChannelClick(ServiceInfo service) {
+                    // the adapter hands back the entry's own ServiceInfo; the service ID alone can match two channels
                     for (ChannelEntry ce : allChannels) {
-                        if (ce.service.serviceId == service.serviceId) {
+                        if (ce.service == service) {
                             selectAndPlayChannel(ce);
                             break;
                         }
@@ -1511,7 +1576,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         int currentIdx = -1;
         if (currentChannelEntry != null) {
             for (int i = 0; i < allChannels.size(); i++) {
-                if (allChannels.get(i).service.serviceId == currentChannelEntry.service.serviceId) {
+                if (isSameEntry(allChannels.get(i), currentChannelEntry)) {
                     currentIdx = i;
                     break;
                 }
@@ -1526,7 +1591,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         int currentIdx = -1;
         if (currentChannelEntry != null) {
             for (int i = 0; i < allChannels.size(); i++) {
-                if (allChannels.get(i).service.serviceId == currentChannelEntry.service.serviceId) {
+                if (isSameEntry(allChannels.get(i), currentChannelEntry)) {
                     currentIdx = i;
                     break;
                 }
@@ -1939,17 +2004,21 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                     try { Thread.sleep(250); } catch (InterruptedException e) { break; }
                 }
 
+                int networkId = d.getNetworkId(), tsId = d.getTsId();
                 for (ServiceInfo s : d.getServices()) {
                     if (!s.pmtSeen || s.streams.isEmpty() || !s.hasVideo()) continue;
                     boolean exists = false;
                     for (ChannelEntry ce : allChannels) {
-                        if (ce.service.serviceId == s.serviceId) {
+                        if (isSameService(ce, networkId, tsId, s.serviceId)) {
                             exists = true;
                             break;
                         }
                     }
                     if (!exists) {
-                        allChannels.add(new ChannelEntry(khz, s.copy()));
+                        ChannelEntry entry = new ChannelEntry(khz, s.copy());
+                        entry.networkId = networkId;
+                        entry.tsId = tsId;
+                        allChannels.add(entry);
                     }
                 }
             }
