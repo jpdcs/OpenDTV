@@ -1751,13 +1751,20 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         btnScanThis.setText("SCAN");
         box.addView(btnScanThis);
 
-        final AtomicInteger currentSelectedKhz = new AtomicInteger(khzList.get(0));
+        // Start on the channel being watched. A Spinner reports its first position as a selection and the listener
+        // tunes there, so starting on UHF 14 moved the tuner off the playing multiplex as soon as the box opened.
+        final int playingKhz = currentChannelEntry != null ? currentChannelEntry.khz : -1;
+        int startPos = Math.max(0, khzList.indexOf(playingKhz));
+        spUhf.setSelection(startPos, false);
+        final AtomicInteger currentSelectedKhz = new AtomicInteger(khzList.get(startPos));
+        final java.util.concurrent.atomic.AtomicBoolean movedOff = new java.util.concurrent.atomic.AtomicBoolean(false);
 
         spUhf.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 int khz = khzList.get(position);
                 currentSelectedKhz.set(khz);
+                if (khz != playingKhz) movedOff.set(true);
                 tvExactFreq.setText(String.format(Locale.US, "Frequency: %.3f MHz (%d kHz)", khz / 1000.0, khz));
                 worker.execute(() -> {
                     if (hub != null && hub.isTunerPresent()) {
@@ -1797,14 +1804,23 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                 })
                 .create();
 
+        final boolean[] scanStarted = {false};
         btnScanThis.setOnClickListener(v -> {
             int khz = currentSelectedKhz.get();
+            scanStarted[0] = true;
             manualScanDialog.dismiss();
             poller.shutdownNow();
             runManualScanForFrequency(khz);
         });
 
-        manualScanDialog.setOnDismissListener(d -> poller.shutdownNow());
+        manualScanDialog.setOnDismissListener(d -> {
+            poller.shutdownNow();
+            // Closed without scanning after the meter tuned elsewhere: the playing channel lost its multiplex
+            // (the player just waited on a demux nobody fed), so tune it again.
+            if (!scanStarted[0] && movedOff.get() && tunerReady && !scanning && currentChannelEntry != null) {
+                tuneAndPlay(currentChannelEntry);
+            }
+        });
         manualScanDialog.show();
     }
 
