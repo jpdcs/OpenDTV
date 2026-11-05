@@ -1857,7 +1857,10 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
             }
 
             // Remove existing entries for this frequency only, and add new ones
-            allChannels.removeIf(ce -> ce.khz == khz);
+            // (an Iterator, not removeIf: that one is Android 7.0+ and crashed here on 5.0 to 6.0)
+            for (java.util.Iterator<ChannelEntry> it = allChannels.iterator(); it.hasNext(); ) {
+                if (it.next().khz == khz) it.remove();
+            }
             allChannels.addAll(newEntries);
 
             scanning = false;

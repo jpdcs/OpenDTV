@@ -18,7 +18,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BooleanSupplier;
 
 import ph.opendtv.source.SignalStatus;
 import ph.opendtv.source.TsSource;
@@ -41,6 +40,14 @@ public final class TunerHub {
     /** Whoever currently uses the tuner. Called when somebody else takes it over. */
     public interface Owner {
         void onPreempted();
+    }
+
+    /**
+     * Asked between tune attempts whether to give up. Our own interface, not java.util.function.BooleanSupplier:
+     * that one only exists from Android 7.0 (API 24), so every tune crashed on Android 5.0 to 6.0.
+     */
+    public interface CancelCheck {
+        boolean isCancelled();
     }
 
     private static TunerHub instance;
@@ -217,7 +224,7 @@ public final class TunerHub {
      * is locked. Staying on the same multiplex is free (no retune, demux kept), so zapping between services of one
      * multiplex is fast. A fresh demux is installed after every real retune.
      */
-    public boolean ensureTuned(int khz, BooleanSupplier cancelled) {
+    public boolean ensureTuned(int khz, CancelCheck cancelled) {
         synchronized (devLock) {
             if (!openLocked(khz)) return false;
             if (locked && currentKhz == khz && source.isReady()) return true;
@@ -259,10 +266,10 @@ public final class TunerHub {
         return true;
     }
 
-    private boolean tuneLocked(int khz, BooleanSupplier cancelled) {
+    private boolean tuneLocked(int khz, CancelCheck cancelled) {
         UsbTunerSource s = source;
         boolean ok = s.tune(khz);
-        if (!ok && !cancelled.getAsBoolean()) {
+        if (!ok && !cancelled.isCancelled()) {
             sleep(300);   // the first attempt right after a frequency change sometimes misses a weak signal
             ok = s.tune(khz);
         }

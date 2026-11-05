@@ -52,6 +52,9 @@ final class BmlSoundPlayer {
     /** Plays a mono 16-bit AIFF / AIFC file. @return false if it cannot be played natively. */
     synchronized boolean playAiff(byte[] d) {
         if (released || d == null || d.length < 12) return false;
+        // AudioTrack.Builder is Android 6.0+. On 5.x its NoClassDefFoundError is an Error, which the catch below
+        // does not take, so it crashed the app; let the page fall back to WebAudio there instead.
+        if (android.os.Build.VERSION.SDK_INT < 23) return false;
         try {
             if (!"FORM".equals(ascii(d, 0, 4))) return false;
             String form = ascii(d, 8, 4);
