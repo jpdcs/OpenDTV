@@ -1256,7 +1256,8 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                     this::showAudioLanguageDialog));
             items.add(new ph.opendtv.ui.SettingAdapter.SettingItem(
                     "App Updates (no APK)",
-                    logicBundles.describe() + " - tap to check for a newer one",
+                    logicBundles.describe() + (ph.opendtv.ota.LogicBundles.updatesEnabled()
+                            ? " - tap to check for a newer one" : ""),
                     android.R.drawable.stat_sys_download,
                     () -> logicBundles.checkForUpdate(this, true)));
             recyclerView.setAdapter(new ph.opendtv.ui.SettingAdapter(this, items));
