@@ -1,0 +1,50 @@
+# Builds, signs and publishes an over-the-air logic bundle (opendtv/bundle) to the release "ota", where the app looks
+# for updates (ph.opendtv.ota.LogicBundles.MANIFEST_URL). Run it by hand from the Actions tab after bumping VERSION in
+# opendtv/bundle/src/ph/opendtv/bundle/Logic.java. Needs the repository secret OTA_SIGNING_KEY: the .pem from
+# opendtv/tools/ota/make_key.sh, whose public half is in LogicBundles.PUBLIC_KEY of the released APK.
+name: OTA logic bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "Release notes shown in the app"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK pieces the bundle build uses (d8, android.jar)
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Build and sign the bundle
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          [ -n "$OTA_SIGNING_KEY" ] || { echo "Set the OTA_SIGNING_KEY secret first (opendtv/tools/ota/make_key.sh)"; exit 1; }
+          KEY="$RUNNER_TEMP/ota-signing-key.pem"
+          printf '%s\n' "$OTA_SIGNING_KEY" > "$KEY"
+          sh opendtv/tools/ota/build_bundle.sh --publish "$KEY" "https://github.com/${{ github.repository }}/releases/download/ota" "$NOTES"
+          rm -f "$KEY"
+
+      - name: Publish to the release "ota"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ota > /dev/null 2>&1 || gh release create ota --latest=false --title "Over-the-air logic bundles" \
+              --notes "Signed logic bundles the app downloads by itself. Not an APK release: install APKs from the other releases."
+          gh release upload ota opendtv/build/ota/bundle-*.jar opendtv/build/ota/bundle.json --clobber
