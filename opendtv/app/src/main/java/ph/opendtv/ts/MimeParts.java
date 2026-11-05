@@ -68,7 +68,7 @@ final class MimeParts {
             int start = h.bodyStart;
             int end;
             int declared = parseInt(h.map.get("content-length"));
-            if (declared >= 0 && start + declared <= d.length) {
+            if (declared >= 0 && declared <= d.length - start) {   // start + declared could overflow int
                 end = start + declared;
                 pos = indexOf(d, delim, end);
             } else {
@@ -111,10 +111,15 @@ final class MimeParts {
         String b = contentType.substring(i + 9).trim();
         if (b.startsWith("\"")) {
             int q = b.indexOf('"', 1);
-            return q > 0 ? b.substring(1, q) : null;
+            if (q <= 0) return null;
+            b = b.substring(1, q);
+        } else {
+            int semi = b.indexOf(';');
+            if (semi >= 0) b = b.substring(0, semi).trim();
         }
-        int semi = b.indexOf(';');
-        return semi >= 0 ? b.substring(0, semi).trim() : b;
+        // RFC 2046 caps a boundary at 70 characters. A longer one made the plain search below take minutes
+        // per module (under the demux lock, so video and the UI stalled with it).
+        return b.length() <= 70 ? b : null;
     }
 
     private static int skipEol(byte[] d, int p) {

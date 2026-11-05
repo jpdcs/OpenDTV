@@ -42,8 +42,8 @@ public final class TsDemux {
     private static final class Ring {
         final boolean psi;
         final int maxPkts;
-        byte[] buf = new byte[64 * PKT];
-        int cap = 64, next = 0, count = 0;
+        byte[] buf;   // first packet allocates: a PID that is only announced (never carries data) costs nothing
+        int cap = 0, next = 0, count = 0;
 
         Ring(int maxPkts, boolean psi) {
             this.maxPkts = maxPkts;
@@ -51,6 +51,10 @@ public final class TsDemux {
         }
 
         void add(byte[] b, int o) {
+            if (buf == null) {
+                cap = Math.min(64, maxPkts);
+                buf = new byte[cap * PKT];
+            }
             if (count == cap && cap < maxPkts) {            // not wrapped yet: grow in place
                 int ncap = Math.min(maxPkts, cap * 2);
                 byte[] nb = new byte[ncap * PKT];
@@ -75,6 +79,11 @@ public final class TsDemux {
     }
 
     private static final int PSI_RING_PKTS = 512, EIT_RING_PKTS = 1024, DATA_RING_PKTS = 12000;
+    /**
+     * PIDs we assemble sections on, and data carousels we decode. A real multiplex has a handful of each, but one
+     * crafted PAT can name 8000 PMT PIDs and one PMT hundreds of carousels, and their buffers ran the heap out.
+     */
+    private static final int MAX_SECTION_PIDS = 256, MAX_DATA_PIDS = 16;
     private final Ring[] rings = new Ring[0x2000];
     private long eventSections, pmtEmergencyDescs;
     private boolean bmlEwbs = false;
@@ -287,7 +296,7 @@ public final class TsDemux {
             if (program == 0) continue; // NIT PID entry
             svc(program).pmtPid = pid;
             ensureRing(pid, PSI_RING_PKTS, true);
-            if (!assemblers.containsKey(pid)) {
+            if (!assemblers.containsKey(pid) && assemblers.size() < MAX_SECTION_PIDS) {
                 assemblers.put(pid, new SectionAssembler(pid, this::onSection));
             }
         }
@@ -320,11 +329,15 @@ public final class TsDemux {
                 d += 2 + dl;
             }
             list.add(st);
-            if (st.isDatacast()) ensureRing(st.pid, DATA_RING_PKTS, false);
-            if (st.isDatacast() && !carousels.containsKey(st.pid)) {
+            // A carousel never takes over a PID that already carries tables (PAT, EIT, a PMT ...): those would
+            // stop being parsed for the rest of the tune.
+            boolean newCarousel = st.isDatacast() && !carousels.containsKey(st.pid) && st.pid >= 0x20
+                    && !assemblers.containsKey(st.pid) && carousels.size() < MAX_DATA_PIDS;
+            if (newCarousel || carousels.containsKey(st.pid)) ensureRing(st.pid, DATA_RING_PKTS, false);
+            if (newCarousel) {
                 carousels.put(st.pid, new CarouselDecoder(st.pid));
                 assemblers.put(st.pid, new SectionAssembler(st.pid, this::onSection));
-            } else if (st.streamType == 0x05 && !assemblers.containsKey(st.pid)) {
+            } else if (st.streamType == 0x05 && !assemblers.containsKey(st.pid) && assemblers.size() < MAX_SECTION_PIDS) {
                 // private sections: could carry DSM-CC stream events (EWBS event messages) on their own PID
                 assemblers.put(st.pid, new SectionAssembler(st.pid, this::onSection));
             }
