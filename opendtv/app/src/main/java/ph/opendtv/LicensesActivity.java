@@ -11,6 +11,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.widget.TextViewCompat;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
@@ -58,7 +59,8 @@ public class LicensesActivity extends AppCompatActivity {
         list.addView(header("Third-party components", true));
         TextView note = new TextView(this);
         note.setText("The data-broadcast viewer (web-bml and its dependencies) is bundled in assets/bml/bml.js.");
-        note.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall);
+        // TextViewCompat: TextView.setTextAppearance(int) is Android 6.0+ and crashed this screen on 5.x
+        TextViewCompat.setTextAppearance(note, com.google.android.material.R.style.TextAppearance_Material3_BodySmall);
         note.setTextColor(color(com.google.android.material.R.attr.colorOnSurfaceVariant));
         note.setPadding(dp(4), 0, dp(4), dp(8));
         list.addView(note);
@@ -77,7 +79,7 @@ public class LicensesActivity extends AppCompatActivity {
     private TextView header(String text, boolean topGap) {
         TextView t = new TextView(this);
         t.setText(text);
-        t.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleSmall);
+        TextViewCompat.setTextAppearance(t, com.google.android.material.R.style.TextAppearance_Material3_TitleSmall);
         t.setTextColor(color(com.google.android.material.R.attr.colorPrimary));
         t.setPadding(dp(4), dp(topGap ? 20 : 8), dp(4), dp(8));
         return t;

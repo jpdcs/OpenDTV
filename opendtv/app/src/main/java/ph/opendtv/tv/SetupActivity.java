@@ -242,9 +242,9 @@ public final class SetupActivity extends AppCompatActivity implements TunerHub.O
             final int idx = i;
             String head = String.format(Locale.US, "Channel %d of %d:  %s\n", i + 1, freqs.size(), channelLabel(khz));
             setStatus(head + "tuning ... (the first one also loads the tuner firmware)");
-            boolean locked = hub.ensureTuned(khz, new java.util.function.BooleanSupplier() {
+            boolean locked = hub.ensureTuned(khz, new TunerHub.CancelCheck() {
                 @Override
-                public boolean getAsBoolean() {
+                public boolean isCancelled() {
                     return scanCancel;
                 }
             });
