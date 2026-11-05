@@ -69,6 +69,7 @@ public final class LogicBundles {
     private static final String K_TRYING = "trying";       // started but not yet confirmed healthy
     private static final String K_BAD = "bad_versions";    // failed to start or failed the check; never used again
     private static final String K_SHA = "sha_";            // + version: SHA-256 checked at download, again at load
+    private static final String K_KEY = "key_";            // + version: which signing key accepted it
     private static final String K_LAST_CHECK = "last_check";
     private static final long AUTO_CHECK_EVERY_MS = 24L * 60 * 60 * 1000;
     private static final int MAX_BUNDLE_BYTES = 8 * 1024 * 1024;
@@ -150,6 +151,10 @@ public final class LogicBundles {
         if (current > embedded) {
             File f = downloadedFile(current);
             try {
+                // Only while this APK has the key that accepted it: an APK without a key, or with a new one, runs
+                // its own bundle instead of code another key let in.
+                if (!updatesEnabled() || !keyId().equals(sp.getString(K_KEY + current, "-")))
+                    throw new SecurityException("bundle " + current + " was accepted by another signing key");
                 // Checked again before it runs: the copy on disk must still be the one that was signed.
                 if (!sha256(readFile(f)).equalsIgnoreCase(sp.getString(K_SHA + current, "-")))
                     throw new SecurityException("bundle file changed since it was checked");
@@ -265,7 +270,8 @@ public final class LogicBundles {
                         out.write(jar);
                     }
                     f.setReadOnly();
-                    sp.edit().putString(K_SHA + version, sha).putInt(K_PENDING, version).commit();
+                    sp.edit().putString(K_SHA + version, sha).putString(K_KEY + version, keyId())
+                            .putInt(K_PENDING, version).commit();
                     got = version;
                     String notes = m.optString("notes", "");
                     result = "Bundle " + version + " is ready" + (notes.isEmpty() ? "." : ": " + notes);
@@ -363,6 +369,15 @@ public final class LogicBundles {
             if (out.size() > maxBytes) throw new IOException("file too large");
         }
         return out.toByteArray();
+    }
+
+    /** Short fingerprint of {@link #PUBLIC_KEY}. */
+    private static String keyId() {
+        try {
+            return sha256(PUBLIC_KEY.getBytes(StandardCharsets.US_ASCII)).substring(0, 16);
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private static byte[] readFile(File f) throws IOException {
