@@ -1900,6 +1900,9 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         playGen.incrementAndGet();
         player.stop();
         player.clearMediaItems();
+        // Stop must not cost the channels the scan never reached: they come back after a stopped scan
+        // (a first scan has none, so it simply keeps what it found).
+        final List<ChannelEntry> previous = new ArrayList<>(allChannels);
         allChannels.clear();
 
         List<Integer> freqs = new ArrayList<>();
@@ -1909,12 +1912,14 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
 
         new Thread(() -> {
             if (!hub.ensurePermission(60_000)) {
+                allChannels.addAll(previous);   // nothing was scanned
                 scanning = false;
                 dismissScanDialog();
                 ui.post(() -> Toast.makeText(MainActivity.this, "USB permission required", Toast.LENGTH_SHORT).show());
                 return;
             }
             hub.acquire(MainActivity.this);
+            Set<Integer> scanned = new HashSet<>();   // frequencies the scan finished
             for (int i = 0; i < freqs.size() && !scanCancel; i++) {
                 int khz = freqs.get(i);
                 int uhfCh = 14 + (khz - 473143) / 6000;
@@ -1923,7 +1928,11 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                         "Found: " + allChannels.size() + " channel(s)");
 
                 boolean locked = hub.ensureTuned(khz, () -> scanCancel);
-                if (!locked || scanCancel) continue;
+                if (scanCancel) break;
+                if (!locked) {
+                    scanned.add(khz);
+                    continue;
+                }
 
                 TsDemux d = hub.demux();
                 long start = System.currentTimeMillis();
@@ -1938,6 +1947,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                             "Found: " + allChannels.size() + " channel(s)");
                     try { Thread.sleep(250); } catch (InterruptedException e) { break; }
                 }
+                if (scanCancel) break;   // stopped while reading names: this frequency is not finished
 
                 for (ServiceInfo s : d.getServices()) {
                     if (!s.pmtSeen || s.streams.isEmpty() || !s.hasVideo()) continue;
@@ -1952,12 +1962,21 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                         allChannels.add(new ChannelEntry(khz, s.copy()));
                     }
                 }
+                scanned.add(khz);
+            }
+            final boolean stopped = scanCancel;
+            if (stopped) {
+                for (ChannelEntry ce : previous) {
+                    if (!scanned.contains(ce.khz)) allChannels.add(ce);
+                }
             }
             scanning = false;
             dismissScanDialog();
             saveChannels();
             ui.post(() -> {
-                Toast.makeText(MainActivity.this, "Scan complete. Found " + allChannels.size() + " channel(s).", Toast.LENGTH_LONG).show();
+                Toast.makeText(MainActivity.this, stopped
+                        ? "Scan stopped. Kept " + allChannels.size() + " channel(s)."
+                        : "Scan complete. Found " + allChannels.size() + " channel(s).", Toast.LENGTH_LONG).show();
                 updateContentAdapter();
                 currentChannelEntry = pickStartChannel();
                 showCurrentChannel();
