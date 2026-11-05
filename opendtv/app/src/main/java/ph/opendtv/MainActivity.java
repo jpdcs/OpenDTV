@@ -1119,6 +1119,9 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
     private void showCurrentChannel() {
         if (currentChannelEntry == null) {
             if (tvCurrentChannel != null) tvCurrentChannel.setText("No channel tuned");
+            // Nothing tuned: the landscape banner has nothing to say, and until it is filled it shows the
+            // layout's sample text ("0.0 Unknown Channel").
+            hideInfoBanner();
             return;
         }
         ServiceInfo svc = currentChannelEntry.service;
@@ -1398,7 +1401,9 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                 params.setMarginEnd(marginEndPx);
                 btnOpenSidePanel.setLayoutParams(params);
             }
-            if (infoBanner != null && infoBanner.getVisibility() == View.VISIBLE) {
+            // Nothing tuned: no banner will come back to bring '<' with it, and the list is the only way forward
+            // (scan, pick a channel), so keep it up. Before, one tap on the video hid it for good.
+            if ((infoBanner != null && infoBanner.getVisibility() == View.VISIBLE) || currentChannelEntry == null) {
                 btnOpenSidePanel.setVisibility(View.VISIBLE);
             } else {
                 btnOpenSidePanel.setVisibility(View.GONE);
