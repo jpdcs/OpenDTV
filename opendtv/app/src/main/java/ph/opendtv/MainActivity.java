@@ -129,6 +129,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
 
     // Data broadcast (BML), landscape and portrait. Landscape: keys only. Portrait: floating remote button + panel.
     private BmlController bml;
+    private ph.opendtv.ota.LogicBundles logicBundles;   // app logic that updates over the air (no new APK)
     private final EwbsBanner ewbsBanner = new EwbsBanner(this);
     private final Runnable ewbsTick = new Runnable() {
         @Override
@@ -202,6 +203,8 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
 
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
         hub = TunerHub.get(this);
+        logicBundles = ph.opendtv.ota.LogicBundles.get(this);
+        logicBundles.logic();   // load the logic bundle before anything uses it
 
         loadFavorites();
         loadChannels();
@@ -266,6 +269,9 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
         showCurrentChannel();
 
         initTuner();
+        // A new logic bundle is kept once the app has run fine for a few seconds; otherwise the next start goes back.
+        ui.postDelayed(logicBundles::markHealthy, 5000);
+        logicBundles.checkForUpdate(this, false);   // at most once a day, and only when updates are set up
     }
 
     /** 0/1 = portrait/landscape, +2 on a tablet-sized screen: the three layout sets we ship. */
@@ -1248,6 +1254,12 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                     audioLanguageSummary() + " - choose among the channel's audio tracks",
                     R.drawable.ic_audio,
                     this::showAudioLanguageDialog));
+            items.add(new ph.opendtv.ui.SettingAdapter.SettingItem(
+                    "App Updates (no APK)",
+                    logicBundles.describe() + (ph.opendtv.ota.LogicBundles.updatesEnabled()
+                            ? " - tap to check for a newer one" : ""),
+                    android.R.drawable.stat_sys_download,
+                    () -> logicBundles.checkForUpdate(this, true)));
             recyclerView.setAdapter(new ph.opendtv.ui.SettingAdapter(this, items));
         } else {
             // Channels tab
@@ -1943,7 +1955,7 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                     if (!s.pmtSeen || s.streams.isEmpty() || !s.hasVideo()) continue;
                     boolean exists = false;
                     for (ChannelEntry ce : allChannels) {
-                        if (ce.service.serviceId == s.serviceId) {
+                        if (sameService(ce, s, d)) {
                             exists = true;
                             break;
                         }
@@ -1968,6 +1980,22 @@ public class MainActivity extends AppCompatActivity implements TunerHub.Owner {
                 }
             });
         }, "FullScanThread").start();
+    }
+
+    /**
+     * Full scan: is {@code s} (found on demux {@code d}) a channel already in the list? The rule comes from the
+     * over-the-air logic bundle; the saved list keeps no TS / network IDs yet, so those are -1 on the listed side.
+     */
+    private boolean sameService(ChannelEntry ce, ServiceInfo s, TsDemux d) {
+        ph.opendtv.ota.AppLogic logic = logicBundles == null ? null : logicBundles.logic();
+        if (logic != null) {
+            try {
+                return logic.isSameService(ce.service.serviceId, -1, -1, s.serviceId, d.getTsId(), d.getNetworkId());
+            } catch (Throwable t) {   // a broken bundle must not take the scan down with it
+                Log.w(TAG, "logic bundle failed in isSameService, using the built-in rule", t);
+            }
+        }
+        return ce.service.serviceId == s.serviceId;   // no (working) bundle: the rule it replaced
     }
 
     private static boolean allNamed(TsDemux d) {

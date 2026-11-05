@@ -28,7 +28,8 @@ public final class LogoHelper {
     private LogoHelper() {}
 
     public static Drawable getLogo(Context context, String channelName, String networkName) {
-        String filename = matchLogo(channelName);
+        String filename = fromBundle(context, channelName, networkName);
+        if (filename == null) filename = matchLogo(channelName);
         if (filename == null) filename = matchLogo(networkName);
         if (filename == null) return null;
 
@@ -38,6 +39,28 @@ public final class LogoHelper {
             Log.w(TAG, "Failed to load logo " + filename, e);
             return null;
         }
+    }
+
+    private static String[] logoFiles;   // assets/dtvlogo, listed once
+
+    /**
+     * The over-the-air logic bundle's pick for this channel, as a file in assets/dtvlogo, or null to use the rules
+     * below. The bundle names a logo by its base name ("gma"), so it doesn't care how the image is stored.
+     */
+    private static String fromBundle(Context context, String channelName, String networkName) {
+        try {
+            ph.opendtv.ota.AppLogic logic = ph.opendtv.ota.LogicBundles.get(context).logic();
+            String base = logic == null ? null : logic.logoFor(channelName, networkName);
+            if (base == null || base.isEmpty()) return null;
+            if (logoFiles == null) logoFiles = context.getAssets().list(DIR.substring(0, DIR.length() - 1));
+            for (String f : logoFiles) {
+                int dot = f.lastIndexOf('.');
+                if (dot > 0 && f.substring(0, dot).equals(base)) return f;   // only files that are really there
+            }
+        } catch (Throwable t) {   // a broken bundle must not take the channel list down with it
+            Log.w(TAG, "logic bundle failed in logoFor", t);
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------------

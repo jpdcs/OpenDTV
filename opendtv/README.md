@@ -169,3 +169,27 @@ or the app goes to the background.
   `bml.js` through the `AndroidBml` bridge); if a sound is unavailable the page falls back to WebAudio as before.
 - **BML fonts**: Kosugi / Kosugi Maru (`assets/bml/fonts`) are registered as the BML round / bold round / square gothic fonts.
 - The BML engine itself (`BmlController`, web-bml in `bml.js`) is unchanged apart from these hooks.
+
+## Update: over-the-air logic updates (no new APK)
+
+- Like Expo's JavaScript updates: the APK is the shell (screens, layouts, images, permissions, Media3/FFmpeg, the USB
+  driver), and logic that changes often lives in a **bundle**, compiled Java (`classes.dex` in a `.jar`) that implements
+  `ota/AppLogic`. Bundle 1 ships inside the APK (`assets/ota`) and does exactly what the app did before.
+- Two pieces of logic are in the bundle so far: the full scan's "is this the same channel" rule
+  (`isSameService`, issue #1) and channel name to logo matching (`logoFor`, names in `assets/dtvlogo`; the images stay
+  in the APK). More can move in later, one small step at a time.
+- `ota/LogicBundles` checks GitHub (`releases/download/ota/bundle.json`) at most once a day, or from **Settings > App
+  Updates (no APK)**. A newer bundle is downloaded, its SHA-256 and ECDSA P-256 signature are checked against the key
+  built into the APK, and it is used from the **next start**. If the app dies within 5 s of starting a new bundle, the
+  next start goes back to the previous one, and that version is never used again.
+- **Off until a key is set**: with an empty `LogicBundles.PUBLIC_KEY` only bundle 1 runs and the app makes no network
+  request. To turn it on: `tools/ota/make_key.sh` prints the public key for `PUBLIC_KEY` (release that APK) and writes
+  the private `.pem`; put the `.pem` in the repository secret `OTA_SIGNING_KEY`. Never commit it.
+- **Publishing**: change `bundle/src/ph/opendtv/bundle/Logic.java`, bump `VERSION`, and run the **OTA logic bundle**
+  workflow (Actions tab). It builds with `tools/ota/build_bundle.sh`, signs, and uploads `bundle-N.jar` +
+  `bundle.json` to the release `ota` (not marked latest, so APK downloads stay the same). Locally:
+  `tools/ota/build_bundle.sh --embed` puts a bundle inside the APK, `--publish KEY.pem BASE_URL` signs one.
+- A bundle says which shell it needs (`minShell` = `LogicBundles.SHELL_API`). Changing `AppLogic`, or anything only the
+  APK has (a library, permission, layout, image), still needs a new APK.
+- Adds the `INTERNET` permission (used only for this). Bundles are downloaded code, which Google Play does not allow;
+  GitHub releases are fine.
