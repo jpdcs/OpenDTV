@@ -77,7 +77,8 @@ public final class TsDemux {
     private static final int PSI_RING_PKTS = 512, EIT_RING_PKTS = 1024, DATA_RING_PKTS = 12000;
     private final Ring[] rings = new Ring[0x2000];
     private long eventSections, pmtEmergencyDescs;
-    private boolean bmlEwbs = false;
+    /** PIDs whose last BML event message said EWBS start ('1'); each PID's own '2' ends it. */
+    private final java.util.Set<Integer> bmlEwbsPids = new java.util.HashSet<>();
     private String iipLastHex = "";
 
     private void ensureRing(int pid, int max, boolean psi) {
@@ -104,6 +105,11 @@ public final class TsDemux {
     // EWBS / emergency signalling: TMCC start flag (IIP), PMT 0xFC descriptor, BML event messages
     private static final int MAX_EWBS_LOG = 200;
     private boolean iipFlag = false;
+    /**
+     * An actual EWBS start was seen (IIP flag, a PMT 0xFC start or a BML '1'). The log also lists routine event
+     * messages, so "the log is not empty" showed "EWBS was signalled" on ordinary channels.
+     */
+    private boolean ewbsStartSeen = false;
     private long iipPackets = 0, iipBadCrc = 0;
     private final List<String> ewbsLog = new ArrayList<>();
     private final Map<Integer, String> lastEventMsg = new TreeMap<>();
@@ -453,6 +459,7 @@ public final class TsDemux {
             iipFlag = f;
             logEwbs(f ? "IIP: emergency start-up flag 0 -> 1 (EWBS START)" : "IIP: emergency start-up flag 1 -> 0 (EWBS END)");
         }
+        if (iipFlag) ewbsStartSeen = true;
     }
 
     /** PMT program-level emergency_information_descriptor (tag 0xFC). */
@@ -488,6 +495,7 @@ public final class TsDemux {
         }
         si.emergencyActive = active;
         si.emergencyInfo = now;
+        if (active) ewbsStartSeen = true;
     }
 
     /**
@@ -502,15 +510,23 @@ public final class TsDemux {
             if (d + 2 + dl > n - 4) break;
             if (tag == 0x40 && dl >= 3) {
                 int group = ((s[d + 2] & 0xFF) << 4) | ((s[d + 3] & 0xF0) >> 4);
-                int e = d + 2 + dl, st = e;
-                while (st > d + 2 && s[st - 1] >= 0x20 && s[st - 1] < 0x7F) st--;
+                // private_data_byte only starts after the 11 fixed bytes (group, time_mode, the 5-byte time,
+                // event_msg_type, event_msg_id). Scanning into them read event_msg_id 0x0031 as the text "1",
+                // a false EWBS start.
+                int e = d + 2 + dl, st = e, privStart = d + 2 + 11;
+                while (st > privStart && s[st - 1] >= 0x20 && s[st - 1] < 0x7F) st--;
                 String priv = new String(s, st, e - st, java.nio.charset.StandardCharsets.US_ASCII);
                 String key = group + "|" + priv;
                 if (!key.equals(lastEventMsg.get(pid))) {
                     lastEventMsg.put(pid, key);
                     char last = priv.isEmpty() ? ' ' : priv.charAt(priv.length() - 1);
-                    if (last == '1') bmlEwbs = true;
-                    else if (last == '2') bmlEwbs = false;
+                    // Per PID: another service's routine '2' must not end an alert this one started.
+                    if (last == '1') {
+                        bmlEwbsPids.add(pid);
+                        ewbsStartSeen = true;
+                    } else if (last == '2') {
+                        bmlEwbsPids.remove(pid);
+                    }
                     logEwbs(String.format(Locale.US, "EVENT MSG pid 0x%04X group %d private '%s'%s", pid, group, priv,
                             last == '1' ? "  <- BML EWBS START" : last == '2' ? "  (BML: end / normal)" : ""));
                 }
@@ -521,14 +537,14 @@ public final class TsDemux {
 
     /** true while any EWBS signal (IIP flag or a PMT start descriptor) is active. */
     public synchronized boolean isEwbsActive() {
-        if (iipFlag || bmlEwbs) return true;
+        if (iipFlag || !bmlEwbsPids.isEmpty()) return true;
         for (ServiceInfo si : services.values()) if (si.emergencyActive) return true;
         return false;
     }
 
     /** true if any EWBS signal has been seen at all (even if it has ended again): useful for finished recordings. */
     public synchronized boolean ewbsEverSeen() {
-        return !ewbsLog.isEmpty();
+        return ewbsStartSeen;
     }
 
     /** Short one-line description of what is signalling EWBS right now / last time (for the on-screen banner). */
@@ -541,7 +557,7 @@ public final class TsDemux {
                 sb.append("PMT ").append(si.serviceId);
             }
         }
-        if (bmlEwbs) {
+        if (!bmlEwbsPids.isEmpty()) {
             if (sb.length() > 0) sb.append(", ");
             sb.append("BML event");
         }
@@ -551,12 +567,12 @@ public final class TsDemux {
     /** Multi-line text for the analyzer. Always non-empty so the user can see that EWBS was looked for. */
     public synchronized String ewbsReport() {
         StringBuilder sb = new StringBuilder();
-        sb.append(isEwbsActive() ? "!! EWBS ACTIVE !!\n" : ewbsLog.isEmpty() ? "EWBS: no signal seen\n" : "EWBS: idle (was signalled, see log)\n");
+        sb.append(isEwbsActive() ? "!! EWBS ACTIVE !!\n" : !ewbsStartSeen ? "EWBS: no signal seen\n" : "EWBS: idle (was signalled, see log)\n");
         sb.append(String.format(Locale.US, "  IIP 0x1FF0: %d ok, %d bad CRC, emergency start-up flag %s\n",
                 iipPackets, iipBadCrc, iipPackets == 0 ? "n/a (no IIP in this TS)" : iipFlag ? "ON" : "off"));
         if (!iipLastHex.isEmpty()) sb.append("  last IIP MCCI: ").append(iipLastHex).append('\n');
         sb.append(String.format(Locale.US, "  PMT 0xFC descriptors seen: %d | DSM-CC event sections (0x3D): %d | BML EWBS flag: %s\n",
-                pmtEmergencyDescs, eventSections, bmlEwbs ? "ON" : "off"));
+                pmtEmergencyDescs, eventSections, !bmlEwbsPids.isEmpty() ? "ON" : "off"));
         for (ServiceInfo si : services.values()) {
             if (!si.emergencyInfo.isEmpty()) sb.append("  PMT ").append(si.serviceId).append(": ").append(si.emergencyInfo).append('\n');
         }
