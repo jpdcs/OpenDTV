@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import ph.opendtv.source.UsbTunerSource;
 import ph.opendtv.ts.EpgEvent;
 import ph.opendtv.ts.ServiceInfo;
 import ph.opendtv.ts.TsDemux;
@@ -66,7 +67,7 @@ public final class SetupActivity extends AppCompatActivity implements TunerHub.O
         if (inputId == null) inputId = TvChannels.inputId(this);
         buildUi();
         setResult(Activity.RESULT_CANCELED);
-        if (!hub.isTunerPresent()) setStatus("Tuner not found. Plug in the dongle (048d:275a), then choose a scan.");
+        if (!hub.isTunerPresent()) setStatus("Tuner not found. Plug in the dongle (" + UsbTunerSource.SUPPORTED_IDS + "), then choose a scan.");
         else setStatus("Choose Quick scan (known channels) or Full scan (all UHF channels).");
     }
 

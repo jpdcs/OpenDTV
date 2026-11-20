@@ -34,7 +34,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Offer to open the app when the tuner (048d:275a) is plugged in -->
+            <!-- Offer to open the app when the tuner (048d:275a or 048d:e275) is plugged in -->
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>

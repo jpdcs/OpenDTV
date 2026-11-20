@@ -16,6 +16,7 @@ import java.util.Set;
  *
  * Run: javac -d out -sourcepath app/src/main/java tools/ph/opendtv/source/TunerDiffTest.java
  *      java -cp out ph.opendtv.source.TunerDiffTest tools/golden/tuner_golden.txt
+ *      java -cp out ph.opendtv.source.TunerDiffTest tools/golden/tuner_golden_ptx1.txt ptx1   (PT275C, libPTx1Drv.so)
  */
 public final class TunerDiffTest {
     static int pseudo(int p, long a) {
@@ -63,6 +64,8 @@ public final class TunerDiffTest {
 
     public static void main(String[] args) throws Exception {
         BufferedReader br = new BufferedReader(new FileReader(args[0]));
+        It9175Profile profile = args.length > 1 && args[1].equals("ptx1") ? It9175Profile.PT275C : It9175Profile.PT275A;
+        System.out.println("profile: " + profile.name);
         Set<Long> targets = new HashSet<Long>();
         String line;
         int scenarios = 0, failed = 0;
@@ -103,7 +106,7 @@ public final class TunerDiffTest {
                 io.expl.put(FakeIo.key(8, 0x1c6), 1);
                 io.expl.put(FakeIo.key(8, 0x4d), r4d);
                 StringBuilder log = new StringBuilder();
-                It9175Tuner t = new It9175Tuner(io, log);
+                It9175Tuner t = new It9175Tuner(io, log, profile);
                 boolean ok = t.init() && t.tune(freq);
                 boolean same = ok && io.ops.equals(exp);
                 if (!same) {

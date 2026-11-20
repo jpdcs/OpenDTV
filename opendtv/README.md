@@ -48,9 +48,22 @@ Without hardware, use a **.ts** capture to exercise everything else.
 ```
 javac -d out -sourcepath app/src/main/java tools/ph/opendtv/source/TunerDiffTest.java
 java -cp out ph.opendtv.source.TunerDiffTest tools/golden/tuner_golden.txt
+java -cp out ph.opendtv.source.TunerDiffTest tools/golden/tuner_golden_ptx1.txt ptx1
 ```
 `tools/golden/tuner_golden.txt` holds the vendor library's register writes for each scenario; `tools/emu/` has the
 emulator and generators that produced it and `It9175Data.java` (needs `libpt275aDrv.so`, not included).
+
+The PT275C (`048d:e275`) data comes from the vendor's other driver build, `libPTx1Drv.so` (Pad TV 3.0.0.128,
+arm64). The emulator scripts take the library and its export prefix from the environment:
+```
+export OPENDTV_LIB=/path/to/libPTx1Drv.so OPENDTV_PREFIX=libPT917x_
+OPENDTV_BANDS=bands_ptx1.json python bands2.py
+OPENDTV_BANDS=bands_ptx1.json OPENDTV_CLASS=It9175DataPtx1 python gen_java.py
+OPENDTV_GOLDEN=../golden/tuner_golden_ptx1.txt python golden.py 80
+python gen_fw.py $OPENDTV_LIB It9175FirmwarePtx1
+```
+Run with the defaults (`libpt275aDrv.so`), the same scripts reproduce the committed `It9175Data.java`,
+`It9175Firmware.java` and `tuner_golden.txt` byte for byte (ignoring indentation).
 
 ## Test the library on a PC (no Android needed)
 
@@ -95,7 +108,7 @@ The same APK also registers a **TV input** ("OpenDTV ISDB-T") for the system *Li
 `minSdk` is now 28.
 
 Setup on the TV box:
-1. Install the APK, plug in the dongle (048d:275a) and allow the USB permission dialog.
+1. Install the APK, plug in the dongle (048d:275a or 048d:e275) and allow the USB permission dialog.
 2. Open **Live Channels -> Settings -> Channel sources** (or the "OpenDTV channel scan" icon on the launcher),
    choose **OpenDTV ISDB-T** and run **Quick scan** or **Full scan**. Found services are written to the TV provider.
 3. Watch from Live Channels; zapping inside one multiplex does not retune the dongle.

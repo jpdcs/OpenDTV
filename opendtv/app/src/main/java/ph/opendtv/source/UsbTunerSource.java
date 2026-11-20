@@ -20,7 +20,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * USB tuner source for the ITE IT9135/IT9175-family Pad TV / GMA Now dongle (VID 048d, PID 275a).
+ * USB tuner source for the ITE IT9135/IT9175-family Pad TV / GMA Now dongles: PT275 (VID 048d, PID 275a) and
+ * PT275C (PID e275). Both use the same protocol; firmware and init scripts come from {@link It9175Profile}.
  *
  * Transport (from libpt275aDrv.so in GMA Now 1.47; the vendor driver does raw USBDEVFS_BULK on these):
  *   bulk OUT 0x02  command frames        (see {@link AfaCmd})
@@ -38,7 +39,19 @@ import java.util.Locale;
  */
 public final class UsbTunerSource implements TsSource {
     public static final int VID = 0x048d;
-    public static final int PID = 0x275a;
+    /** PT275 / GMA Now. */
+    public static final int PID = It9175Profile.PID_PT275;
+    /** PT275C (USB-C). The vendor app drives it with libPTx1Drv.so instead of libpt275aDrv.so. */
+    public static final int PID_PT275C = It9175Profile.PID_PT275C;
+
+    /** True for every dongle this driver supports. */
+    public static boolean isSupported(UsbDevice d) {
+        return d != null && d.getVendorId() == VID && It9175Profile.forProductId(d.getProductId()) != null;
+    }
+
+    /** "048d:275a / 048d:e275", for status messages. */
+    public static final String SUPPORTED_IDS = String.format(Locale.US, "%04x:%04x / %04x:%04x", VID, PID, VID,
+            PID_PT275C);
 
     static final int EP_CMD_OUT = 0x02;
     static final int EP_CMD_IN = 0x81;
@@ -54,6 +67,7 @@ public final class UsbTunerSource implements TsSource {
 
     private final UsbManager manager;
     private final UsbDevice device;
+    private final It9175Profile profile;
     private volatile UsbDeviceConnection connection;
     private final List<UsbInterface> claimed = new ArrayList<UsbInterface>();
     private UsbEndpoint epCmdOut;
@@ -77,6 +91,8 @@ public final class UsbTunerSource implements TsSource {
     public UsbTunerSource(UsbManager manager, UsbDevice device) {
         this.manager = manager;
         this.device = device;
+        It9175Profile p = It9175Profile.forProductId(device.getProductId());
+        this.profile = p != null ? p : It9175Profile.PT275A;
     }
 
     @Override
@@ -291,7 +307,8 @@ public final class UsbTunerSource implements TsSource {
         byte[] id = readRegisters(AfaCmd.PROC_LINK, 0x1223, 2);
         if (ver == null || id == null) return false;
         int chipId = (id[0] & 0xFF) | ((id[1] & 0xFF) << 8);
-        notes.append(String.format(Locale.US, "chip version=%d id=0x%04x\n", ver[0] & 0xFF, chipId));
+        notes.append(String.format(Locale.US, "chip version=%d id=0x%04x, profile %s\n", ver[0] & 0xFF, chipId,
+                profile.name));
 
         byte[] fwLink = firmwareVersion(AfaCmd.PROC_LINK);
         notes.append("fw LINK before=").append(fwLink == null ? "none" : hex(fwLink, 4)).append('\n');
@@ -327,7 +344,7 @@ public final class UsbTunerSource implements TsSource {
         byte[] fwOfdm = firmwareVersion(AfaCmd.PROC_OFDM);
         notes.append("fw OFDM=").append(fwOfdm == null ? "none" : hex(fwOfdm, 4)).append('\n');
         notes.append(diagRegs("before tuner init"));
-        tuner = new It9175Tuner(new TunerIo(), notes);
+        tuner = new It9175Tuner(new TunerIo(), notes, profile);
         boolean ok = tuner.init();
         notes.append(tuner.describe()).append('\n');
         notes.append(diagRegs("after tuner init"));
@@ -443,10 +460,10 @@ public final class UsbTunerSource implements TsSource {
         if (!writeRegisters(AfaCmd.PROC_LINK, 0x4bfb, new byte[] {0})) return false;
         if (!writeRegisters(AfaCmd.PROC_LINK, 0xcfff, new byte[] {0})) return false;
         if (!writeRegisters(AfaCmd.PROC_LINK, 0xf103, new byte[] {7})) return false;
-        byte[] image = It9175Firmware.image();
+        byte[] image = profile.firmware();
         int off = 0;
-        for (int i = 0; i < It9175Firmware.CHUNKS.length; i++) {
-            int n = It9175Firmware.CHUNKS[i];
+        for (int i = 0; i < profile.fwChunks.length; i++) {
+            int n = profile.fwChunks[i];
             byte[] chunk = new byte[n];
             System.arraycopy(image, off, chunk, 0, n);
             off += n;

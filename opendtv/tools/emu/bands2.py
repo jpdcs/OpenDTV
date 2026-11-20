@@ -1,4 +1,4 @@
-import sys,json
+import os,sys,json
 sys.path.insert(0,'.')
 from bands import make
 def rowbytes(k):
@@ -27,4 +27,4 @@ for d1 in (0,1):
         pf=f
     out[d1]=trans
     print(d1,len(trans))
-json.dump(out,open('bands.json','w'))
+json.dump(out,open(os.environ.get('OPENDTV_BANDS','bands.json'),'w'))

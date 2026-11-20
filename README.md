@@ -20,9 +20,10 @@ OpenDTV lets you watch free-to-air digital TV on your Android phone, tablet, or 
 | Mygica PadTV PT275 | `048d:275a` | Supported (confirmed on hardware) |
 | GMA Now Dongle | `048d:275a` | Supported |
 | IT9175 Tuner (ITE/Afatech) | `048d:275a` | Supported |
+| Mygica PadTV PT275C (USB-C) | `048d:e275` | Supported, **needs testing** |
 | ABS-CBN TV Plus GO (Tolka, IT9308) | `048d:9308` | Supported, **needs testing** |
 
-> The PT275, GMA Now and IT9175 dongles share the same chip family and driver. The ABS-CBN TV Plus GO (IT9308) uses its own driver path and has not been widely tested yet, so please report your results (see [Contributing](#contributing)). More ISDB-T dongles may be added over time.
+> The PT275, GMA Now and IT9175 dongles share the same chip family and driver. The PT275C uses the same chip and protocol but a different firmware image and init script (the vendor app drives it with a separate driver build), so it gets its own data set. The ABS-CBN TV Plus GO (IT9308) uses its own driver path and has not been widely tested yet, so please report your results (see [Contributing](#contributing)). More ISDB-T dongles may be added over time.
 
 Your Android device must support **USB Host (OTG)**.
 

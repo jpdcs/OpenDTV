@@ -1,4 +1,4 @@
-import sys,json
+import os,sys,json
 sys.path.insert(0,'.')
 from gen import *
 def ser(o):
@@ -36,16 +36,18 @@ for clk in (0,1):
     pre=[x for x in tp[:ic] if keep(x) and not (x[0]=='W' and x[2]==0x4b)]
     tune[clk]=pre
     print(clk,len(A),len(B),len(pre))
-bands=json.load(open('bands.json'))
+bands=json.load(open(os.environ.get('OPENDTV_BANDS','bands.json')))
+CLS=os.environ.get('OPENDTV_CLASS','It9175Data')
+LIBNAME=os.path.basename(os.environ.get('OPENDTV_LIB','libpt275aDrv.so'))
 def jarr(name,lst):
     s='    static final String[] %s = {\n'%name
     s+=''.join('        "%s",\n'%x for x in lst)
     return s+'    };\n'
 out=['package ph.opendtv.source;','',
-'/** GENERATED from the vendor libpt275aDrv.so run under emulation (see tools/emu). Do not edit by hand.',
+'/** GENERATED from the vendor '+LIBNAME+' run under emulation (see tools/emu). Do not edit by hand.',
 ' * Op syntax: Wp:addr:hex = write; Mp:addr:mask:val = read-modify-write ((r&mask)|val); Vp = fw-version query;',
 ' * Pp:addr = poll until reg==0. p = 0 (LINK) or 8 (OFDM). Index = LINK 0xd800 low nibble (clock). */',
-'final class It9175Data {','    private It9175Data() {}','']
+'final class '+CLS+' {','    private '+CLS+'() {}','']
 for clk in (0,1):
     out.append(jarr('INIT_A%d'%clk,[ser(x) for x in init[clk][0]]))
     out.append(jarr('INIT_B%d'%clk,[ser(x) for x in init[clk][1]]))
@@ -55,4 +57,4 @@ for d in ('0','1'):
     for f,r in bands[d]: flat.append('%d,%s'%(f,','.join(str(x) for x in r)))
     out.append('    /** band rows for OFDM 0x1dc=%s: startKHz, fb25, fbb5, fbb6, fbb7, fbb9a, fbb9b, fbba */\n    static final int[][] BANDS%s = {\n'%(d,d)+''.join('        {%s},\n'%x for x in flat)+'    };\n')
 out.append('}')
-open('It9175Data.java','w').write('\n'.join(out))
+open(CLS+'.java','w').write('\n'.join(out))

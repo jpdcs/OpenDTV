@@ -1,4 +1,4 @@
-import sys,struct,random
+import os,sys,struct,random
 sys.path.insert(0,'.')
 from run_tune import build
 from fakedev import FakeDev
@@ -51,5 +51,5 @@ if __name__=='__main__':
         if i==0: sc=(1,0,0,2,4000,0,0xa8,0,497143)
         ops=vendor(sc,tg)
         lines.append('S '+' '.join(map(str,sc))); lines+=['O '+o for o in ops]; lines.append('E')
-    open('golden.txt','w').write('\n'.join(lines)+'\n')
+    open(os.environ.get('OPENDTV_GOLDEN','golden.txt'),'w').write('\n'.join(lines)+'\n')
     print('ok',len(lines))
