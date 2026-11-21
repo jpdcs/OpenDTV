@@ -1,0 +1,18 @@
+# Gradle / Android Studio
+.gradle/
+build/
+.idea/
+*.iml
+.cxx/
+.externalNativeBuild/
+captures/
+.kotlin/
+
+# Python (tools/emu)
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
