@@ -25,8 +25,6 @@ import java.util.HashMap;
  */
 public class UsbProbeActivity extends Activity {
 
-    private static final int VID = 0x048d;
-    private static final int PID = 0x275a;
     private static final String ACTION_USB_PERMISSION = "ph.opendtv.PROBE_PERMISSION";
 
     private UsbManager usbManager;
@@ -83,12 +81,12 @@ public class UsbProbeActivity extends Activity {
         log("USB devices attached: " + devices.size());
         for (UsbDevice d : devices.values()) {
             log(String.format("  %04x:%04x  %s", d.getVendorId(), d.getProductId(), d.getDeviceName()));
-            if (d.getVendorId() == VID && d.getProductId() == PID) {
+            if (ph.opendtv.source.UsbTunerSource.isSupported(d)) {
                 requestPermission(d);
                 return;
             }
         }
-        log("Tuner 048d:275a not found. Plug it in (OTG) and reopen the app.");
+        log("Tuner " + ph.opendtv.source.UsbTunerSource.SUPPORTED_IDS + " not found. Plug it in (OTG) and reopen the app.");
     }
 
     private void requestPermission(UsbDevice device) {

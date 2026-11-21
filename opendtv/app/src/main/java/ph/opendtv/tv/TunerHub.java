@@ -100,7 +100,7 @@ public final class TunerHub {
 
     public UsbDevice findDevice() {
         for (UsbDevice d : usb.getDeviceList().values()) {
-            if (d.getVendorId() == UsbTunerSource.VID && d.getProductId() == UsbTunerSource.PID) return d;
+            if (UsbTunerSource.isSupported(d)) return d;
         }
         return null;
     }
@@ -121,7 +121,7 @@ public final class TunerHub {
     public boolean ensurePermission(long timeoutMs) {
         UsbDevice d = findDevice();
         if (d == null) {
-            lastMessage = "Tuner 048d:275a not found (plug it in; OTG adapter on a phone).";
+            lastMessage = "Tuner " + UsbTunerSource.SUPPORTED_IDS + " not found (plug it in; OTG adapter on a phone).";
             return false;
         }
         if (usb.hasPermission(d)) return true;

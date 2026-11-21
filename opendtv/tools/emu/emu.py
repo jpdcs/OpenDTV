@@ -32,6 +32,10 @@ class Emu:
         self.nhooks = 0
         self.canary = HEAP + 0x100
         uc.mem_write(self.canary, struct.pack('<Q', 0x1122334455667788))
+        # newer NDK builds read the stack canary from TLS ([TPIDR_EL0 + 0x28]) instead of __stack_chk_guard
+        self.tls = HEAP + 0x200
+        uc.mem_write(self.tls + 0x28, struct.pack('<Q', 0x1122334455667788))
+        uc.reg_write(UC_ARM64_REG_TPIDR_EL0, self.tls)
         self.syms = {}
         dynsym = elf.get_section_by_name('.dynsym')
         for s in dynsym.iter_symbols():

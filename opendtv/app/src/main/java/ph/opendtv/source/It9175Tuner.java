@@ -11,7 +11,8 @@ import java.util.Locale;
  * Flow (same order as the vendor): {@link #init} after the firmware is running and LINK 0xf103 = 0x1a,
  * OFDM 0xec4c = 0xa8; then {@link #tune}, {@link #waitLock}, {@link #getStatus}.
  *
- * Table-driven parts (register scripts, bandwidth tables, per-channel band rows) are in {@link It9175Data}.
+ * Table-driven parts (register scripts, bandwidth tables, per-channel band rows) come from an {@link It9175Profile}
+ * ({@link It9175Data} for the PT275, {@link It9175DataPtx1} for the PT275C).
  * Everything that depends on values read back from the chip (crystal index, tuner firmware id / clock,
  * 0x1dc, 0x1c6, ed81) is computed here at run time.
  */
@@ -36,6 +37,8 @@ final class It9175Tuner {
 
     private final Io io;
     private final StringBuilder log;
+    /** Firmware-specific scripts and band tables (they differ between the PT275 and PT275C vendor drivers). */
+    private final It9175Profile profile;
 
     /** LINK 0xd800 low nibble (crystal index). */
     int clock = -1;
@@ -50,8 +53,13 @@ final class It9175Tuner {
     int lastFreqKhz;
 
     It9175Tuner(Io io, StringBuilder log) {
+        this(io, log, It9175Profile.PT275A);
+    }
+
+    It9175Tuner(Io io, StringBuilder log, It9175Profile profile) {
         this.io = io;
         this.log = log;
+        this.profile = profile;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -140,9 +148,9 @@ final class It9175Tuner {
         if (clock > 1) {
             log.append("clock index > 1: vendor takes an unported path, falling back to the index-1 tables\n");
         }
-        if (!run(clockIndex() == 0 ? It9175Data.INIT_A0 : It9175Data.INIT_A1)) return false;
+        if (!run(clockIndex() == 0 ? profile.initA0 : profile.initA1)) return false;
         if (!sambaInit()) return false;
-        if (!run(clockIndex() == 0 ? It9175Data.INIT_B0 : It9175Data.INIT_B1)) return false;
+        if (!run(clockIndex() == 0 ? profile.initB0 : profile.initB1)) return false;
         // lib275a_PIDOnOff(0) (hardware PID filter off = pass the whole TS), lib275a_set_oneseg(0)
         if (!run(new String[] {"M8:f993:fe:00", "M8:f992:fe:01", "W8:1e7:00"})) return false;
         initDone = true;
@@ -306,7 +314,7 @@ final class It9175Tuner {
         }
         long f = freqKhz & 0xFFFFFFFFL;
         // Standard_selectBandwidth (6 MHz) + start of Standard_setFrequency
-        if (!run(clockIndex() == 0 ? It9175Data.TUNE_PRE0 : It9175Data.TUNE_PRE1)) return false;
+        if (!run(clockIndex() == 0 ? profile.tunePre0 : profile.tunePre1)) return false;
         int v4b;
         if (f <= 29999) v4b = 0xFF;
         else if (f <= 300000) v4b = 0;
@@ -317,7 +325,7 @@ final class It9175Tuner {
         int r1dc = rd(OFDM, 0x1dc);
         if (r1c6 < 0 || r1dc < 0) return false;
         if (r1c6 != 0) {
-            int[] r = bandRow(r1dc == 1 ? It9175Data.BANDS1 : It9175Data.BANDS0, f);
+            int[] r = bandRow(r1dc == 1 ? profile.bands1 : profile.bands0, f);
             if (!wr(OFDM, 0xfb25, r[1]) || !wr(OFDM, 0xfbb5, r[2]) || !wr(OFDM, 0xfbb6, r[3])
                     || !wr(OFDM, 0xfbb7, r[4]) || !wr(OFDM, 0xfbb9, r[5]) || !wr(OFDM, 0xfbb9, r[6])
                     || !wr(OFDM, 0xfbba, r[7])) {

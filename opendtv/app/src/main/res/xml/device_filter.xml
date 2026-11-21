@@ -2,4 +2,6 @@
 <resources>
     <!-- 0x048d = 1165, 0x275a = 10074 (ITE Tech, Pad TV / GMA Now tuner) -->
     <usb-device vendor-id="1165" product-id="10074" />
+    <!-- 0xe275 = 57973 (PT275C, USB-C version) -->
+    <usb-device vendor-id="1165" product-id="57973" />
 </resources>

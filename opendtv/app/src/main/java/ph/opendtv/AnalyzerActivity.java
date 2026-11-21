@@ -184,7 +184,7 @@ public class AnalyzerActivity extends AppCompatActivity {
         @Override
         public void onReceive(Context context, Intent intent) {
             UsbDevice dev = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
-            if (dev != null && dev.getVendorId() == UsbTunerSource.VID && dev.getProductId() == UsbTunerSource.PID
+            if (UsbTunerSource.isSupported(dev)
                     && source instanceof UsbTunerSource) {
                 scanCancel = true;
                 stopSource();
@@ -613,7 +613,7 @@ public class AnalyzerActivity extends AppCompatActivity {
     private void connectUsb() {
         if (source instanceof UsbTunerSource) return;   // already running or initialising
         for (UsbDevice d : usbManager.getDeviceList().values()) {
-            if (d.getVendorId() == UsbTunerSource.VID && d.getProductId() == UsbTunerSource.PID) {
+            if (UsbTunerSource.isSupported(d)) {
                 if (usbManager.hasPermission(d)) {
                     startSource(new UsbTunerSource(usbManager, d), false);
                 } else {
@@ -624,7 +624,8 @@ public class AnalyzerActivity extends AppCompatActivity {
                 return;
             }
         }
-        setStatus("Tuner 048d:275a not found. Plug it in (OTG); the app starts it automatically.");
+        setStatus("Tuner " + UsbTunerSource.SUPPORTED_IDS
+                + " not found. Plug it in (OTG); the app starts it automatically.");
     }
 
     /** @param backpressure true for files (pace by the player), false for live sources (drop oldest). */
